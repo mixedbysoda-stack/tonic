@@ -47,8 +47,23 @@ jobs:
           npm run build
           ls -la dist/
 
+      # JUCE's WebBrowserComponent on Windows links against the Microsoft.
+      # Web.WebView2 NuGet package. windows-latest has nuget pre-installed;
+      # we pull the package + point CMake at it via JUCE_WEBVIEW2_PACKAGE_LOCATION.
+      - name: Install WebView2 SDK (NuGet)
+        shell: cmd
+        run: |
+          nuget install Microsoft.Web.WebView2 -Version 1.0.3485.44 -OutputDirectory %GITHUB_WORKSPACE%\nuget-packages
+          dir %GITHUB_WORKSPACE%\nuget-packages
+
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_WEBVIEW=ON -DCOPY_AFTER_BUILD=OFF
+        shell: bash
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_WEBVIEW=ON \
+            -DCOPY_AFTER_BUILD=OFF \
+            -DJUCE_WEBVIEW2_PACKAGE_LOCATION="$GITHUB_WORKSPACE/nuget-packages"
 
       - name: Build
         run: cmake --build build --config Release --parallel
