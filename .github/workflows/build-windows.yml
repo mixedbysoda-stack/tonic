@@ -31,7 +31,7 @@ jobs:
 
       # Tonic v2 ships a React-based webview UI. The HTML must be built into
       # v2-webview/webview-ui/dist/index.html before CMake can embed it as
-      # JUCE BinaryData.
+      # JUCE BinaryData. Built once and reused for both paid + demo configures.
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -56,7 +56,8 @@ jobs:
           nuget install Microsoft.Web.WebView2 -Version 1.0.3485.44 -OutputDirectory %GITHUB_WORKSPACE%\nuget-packages
           dir %GITHUB_WORKSPACE%\nuget-packages
 
-      - name: Configure CMake
+      # ---------- PAID BUILD ----------
+      - name: Configure CMake (paid)
         shell: bash
         run: |
           cmake -B build \
@@ -65,10 +66,10 @@ jobs:
             -DCOPY_AFTER_BUILD=OFF \
             -DJUCE_WEBVIEW2_PACKAGE_LOCATION="$GITHUB_WORKSPACE/nuget-packages"
 
-      - name: Build
+      - name: Build (paid)
         run: cmake --build build --config Release --parallel
 
-      - name: Collect artifacts
+      - name: Collect paid artifacts
         shell: bash
         run: |
           mkdir -p dist/Windows/VST3 dist/Windows/Standalone
@@ -77,7 +78,36 @@ jobs:
           ls -la dist/Windows/VST3/
           ls -la dist/Windows/Standalone/
 
-      - name: Update Inno Setup version
+      # ---------- DEMO BUILD ----------
+      # BUILD_DEMO=ON forces LicenseManager::isActivated() to return false at
+      # runtime via the DEMO_BUILD compile flag, which in turn makes the demo
+      # binary do the 60s-audio / 10s-mute pattern even when a license is
+      # entered. Different binary == different install path == different
+      # Inno Setup AppId so it shows separately in Add/Remove Programs.
+      - name: Configure CMake (demo)
+        shell: bash
+        run: |
+          cmake -B build-demo \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_WEBVIEW=ON \
+            -DBUILD_DEMO=ON \
+            -DCOPY_AFTER_BUILD=OFF \
+            -DJUCE_WEBVIEW2_PACKAGE_LOCATION="$GITHUB_WORKSPACE/nuget-packages"
+
+      - name: Build (demo)
+        run: cmake --build build-demo --config Release --parallel
+
+      - name: Collect demo artifacts
+        shell: bash
+        run: |
+          mkdir -p dist/Windows-Demo/VST3 dist/Windows-Demo/Standalone
+          cp -r build-demo/Tonic_artefacts/Release/VST3/Tonic.vst3 dist/Windows-Demo/VST3/
+          cp build-demo/Tonic_artefacts/Release/Standalone/Tonic.exe dist/Windows-Demo/Standalone/
+          ls -la dist/Windows-Demo/VST3/
+          ls -la dist/Windows-Demo/Standalone/
+
+      # ---------- PAID INSTALLER ----------
+      - name: Update Inno Setup version (paid)
         shell: bash
         run: |
           VERSION=${{ steps.version.outputs.version }}
@@ -86,43 +116,88 @@ jobs:
           sed -i "s/OutputBaseFilename=.*/OutputBaseFilename=Tonic-v$VERSION-Windows-Installer/" installer/windows/tonic.iss
           sed -i "s/Tonic v[0-9.]*/Tonic v$VERSION/g" installer/windows/tonic.iss
 
-      - name: Build Installer (Inno)
+      - name: Build Installer (paid)
         shell: cmd
         run: |
           "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\tonic.iss
 
-      - name: Upload VST3
+      # ---------- DEMO INSTALLER ----------
+      # Generate tonic-demo.iss from tonic.iss via sed so the two stay in
+      # sync. Demo installs to its own folder + its own VST3 bundle name so
+      # it can sit beside a paid install during evaluation. Inner DLL is
+      # still named "Tonic" because PRODUCT_NAME doesn't change with
+      # BUILD_DEMO; most DAWs disambiguate via the outer .vst3 folder name.
+      - name: Generate Demo Inno script
+        shell: bash
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          cp installer/windows/tonic.iss installer/windows/tonic-demo.iss
+          sed -i "s|AppName=Tonic|AppName=Tonic Demo|g" installer/windows/tonic-demo.iss
+          sed -i "s|AppVerName=Tonic v$VERSION|AppVerName=Tonic Demo v$VERSION|" installer/windows/tonic-demo.iss
+          sed -i "s|OutputBaseFilename=.*|OutputBaseFilename=Tonic-v$VERSION-Demo-Windows-Installer|" installer/windows/tonic-demo.iss
+          sed -i "s|OutputDir=..\\\\..\\\\dist\\\\Windows\\\\Installer|OutputDir=..\\\\..\\\\dist\\\\Windows-Demo\\\\Installer|" installer/windows/tonic-demo.iss
+          sed -i "s|UninstallDisplayName=Tonic|UninstallDisplayName=Tonic Demo|" installer/windows/tonic-demo.iss
+          sed -i "s|DefaultDirName={commonpf64}\\\\Carbonated Audio\\\\Tonic|DefaultDirName={commonpf64}\\\\Carbonated Audio\\\\Tonic Demo|" installer/windows/tonic-demo.iss
+          sed -i "s|dist\\\\Windows\\\\VST3|dist\\\\Windows-Demo\\\\VST3|g" installer/windows/tonic-demo.iss
+          sed -i "s|dist\\\\Windows\\\\Standalone|dist\\\\Windows-Demo\\\\Standalone|g" installer/windows/tonic-demo.iss
+          sed -i "s|Common Files\\\\VST3\\\\Tonic.vst3|Common Files\\\\VST3\\\\Tonic Demo.vst3|" installer/windows/tonic-demo.iss
+          sed -i "s|This will install Tonic v$VERSION|This will install Tonic Demo v$VERSION|" installer/windows/tonic-demo.iss
+          echo "--- generated tonic-demo.iss ---"
+          cat installer/windows/tonic-demo.iss
+
+      - name: Build Installer (demo)
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\tonic-demo.iss
+
+      # ---------- UPLOAD ARTIFACTS ----------
+      - name: Upload paid VST3
         uses: actions/upload-artifact@v4
         with:
           name: Tonic-Windows-VST3
           path: dist/Windows/VST3/
 
-      - name: Upload Standalone
+      - name: Upload paid Standalone
         uses: actions/upload-artifact@v4
         with:
           name: Tonic-Windows-Standalone
           path: dist/Windows/Standalone/
 
-      - name: Upload Installer
+      - name: Upload paid Installer
         uses: actions/upload-artifact@v4
         with:
           name: Tonic-Windows-Installer
           path: dist/Windows/Installer/Tonic-v*-Windows-Installer.exe
 
-      # On tag pushes, attach the installer to the corresponding GitHub
-      # Release. softprops/action-gh-release appends to an existing release
-      # when one already exists for that tag (e.g. v2.0.0 already has the
-      # macOS PKG attached — this just adds the Windows EXE alongside).
-      - name: Zip raw artifacts
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Upload demo Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tonic-Demo-Windows-Installer
+          path: dist/Windows-Demo/Installer/Tonic-v*-Demo-Windows-Installer.exe
+
+      # ---------- RELEASE ATTACHMENTS ----------
+      # Paid tags (e.g. v2.0.0) attach the paid installer + raw zip to the
+      # paid release. Demo tags (e.g. v2.0.0-demo) attach the demo installer
+      # to the demo release. softprops/action-gh-release appends to existing
+      # releases when one is already present for that tag (e.g. the macOS
+      # PKG was already attached to v2.0.0-demo earlier).
+      - name: Zip paid raw artifacts
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'demo')
         shell: bash
         run: |
           cd dist/Windows && 7z a -tzip ../../Tonic-Windows.zip VST3/ Standalone/
 
-      - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Attach paid to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'demo')
         uses: softprops/action-gh-release@v2
         with:
           files: |
             Tonic-Windows.zip
             dist/Windows/Installer/Tonic-v*-Windows-Installer.exe
+
+      - name: Attach demo to GitHub Release
+        if: contains(github.ref, 'demo')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Windows-Demo/Installer/Tonic-v*-Demo-Windows-Installer.exe
