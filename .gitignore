@@ -1,0 +1,37 @@
+# Build
+build/
+build-*/
+dist/
+dist-*/
+cmake-build-*/
+installer/payload*/
+installer/*.pkg
+release/
+
+# IDE
+.idea/
+.vscode/
+*.xcodeproj/
+*.xcworkspace/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Binaries
+*.o
+*.a
+*.dylib
+*.dll
+*.exe
+*.vst3
+*.component
+*.aaxplugin
+
+# Webview build outputs
+v2-webview/webview-ui/node_modules/
+v2-webview/webview-ui/dist/
+
+# Local refs
+gui-reference/node_modules/

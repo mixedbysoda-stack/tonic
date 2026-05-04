@@ -1,0 +1,113 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Get version from CMakeLists.txt
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^project(Tonic VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
+
+      # Tonic v2 ships a React-based webview UI. The HTML must be built into
+      # v2-webview/webview-ui/dist/index.html before CMake can embed it as
+      # JUCE BinaryData.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: v2-webview/webview-ui/package-lock.json
+
+      - name: Build webview UI
+        shell: bash
+        run: |
+          cd v2-webview/webview-ui
+          npm ci
+          npm run build
+          ls -la dist/
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_WEBVIEW=ON -DCOPY_AFTER_BUILD=OFF
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p dist/Windows/VST3 dist/Windows/Standalone
+          cp -r build/Tonic_artefacts/Release/VST3/Tonic.vst3 dist/Windows/VST3/
+          cp build/Tonic_artefacts/Release/Standalone/Tonic.exe dist/Windows/Standalone/
+          ls -la dist/Windows/VST3/
+          ls -la dist/Windows/Standalone/
+
+      - name: Update Inno Setup version
+        shell: bash
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          sed -i "s/AppVersion=.*/AppVersion=$VERSION/" installer/windows/tonic.iss
+          sed -i "s/AppVerName=.*/AppVerName=Tonic v$VERSION/" installer/windows/tonic.iss
+          sed -i "s/OutputBaseFilename=.*/OutputBaseFilename=Tonic-v$VERSION-Windows-Installer/" installer/windows/tonic.iss
+          sed -i "s/Tonic v[0-9.]*/Tonic v$VERSION/g" installer/windows/tonic.iss
+
+      - name: Build Installer (Inno)
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\tonic.iss
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tonic-Windows-VST3
+          path: dist/Windows/VST3/
+
+      - name: Upload Standalone
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tonic-Windows-Standalone
+          path: dist/Windows/Standalone/
+
+      - name: Upload Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tonic-Windows-Installer
+          path: dist/Windows/Installer/Tonic-v*-Windows-Installer.exe
+
+      # On tag pushes, attach the installer to the corresponding GitHub
+      # Release. softprops/action-gh-release appends to an existing release
+      # when one already exists for that tag (e.g. v2.0.0 already has the
+      # macOS PKG attached — this just adds the Windows EXE alongside).
+      - name: Zip raw artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          cd dist/Windows && 7z a -tzip ../../Tonic-Windows.zip VST3/ Standalone/
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Tonic-Windows.zip
+            dist/Windows/Installer/Tonic-v*-Windows-Installer.exe
