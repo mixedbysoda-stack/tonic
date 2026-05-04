@@ -80,6 +80,12 @@ juce_add_plugin(Tonic
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
 
+    # WebView2 is required by JUCE's WebBrowserComponent on Windows. JUCE
+    # downloads the SDK from NuGet during build when this is TRUE, which is
+    # exactly what we need for the cyberpunk webview UI on Windows. Macs
+    # use WKWebView and ignore this flag.
+    NEEDS_WEBVIEW2 TRUE
+
     COPY_PLUGIN_AFTER_BUILD ${COPY_AFTER_BUILD}
 
     VST3_CATEGORIES Fx Dynamics
